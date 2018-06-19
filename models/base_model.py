@@ -62,10 +62,10 @@ class BaseModel(object):
         low_img_thresh = np.percentile(max_im, 1)
         im = max_im[x_offset : x_offset + x_range, y_offset : y_offset + y_range, z_offset : z_offset + z_range]
         la = label[x_offset : x_offset + x_range, y_offset : y_offset + y_range, z_offset : z_offset + z_range]
-        # For background, p=1, for positive labels, p=6, the rest is 3
+        # For background, p=1, for positive labels, p=20, the rest is 3
         p = np.ones((x_range, y_range, z_range), dtype=np.float32)
         p[im > low_img_thresh] = 3
-        p[la > 0] = 15
+        p[la > 0] = 20
         p = p.flatten() / np.sum(p)
         
         o = np.random.choice(x_range * y_range * z_range, p=p)
@@ -101,7 +101,12 @@ class BaseModel(object):
             warp_coords = w[0:3].reshape(3, im_size[0], im_size[1], im_size[2])
 
             for p in range(len(image_extracted.shape[-1])):
-                image_extracted[..., p] = warp(image_extracted[..., p], warp_coords)
+                # For warp, first scale to 0 to 1, then scale back
+                extracted_min = np.amin(image_extracted[..., p])
+                extracted_max = np.amax(image_extracted[..., p])
+                img = (image_extracted[..., p] - extracted_min) / (extracted_max - extracted_min)
+                image_extracted[..., p] = warp(img, warp_coords)
+                image_extracted[..., p] = image_extracted[..., p] * (extracted_max - extracted_min) + extracted_min
         
             final_labels = np.empty(im_size + [nclass], dtype=np.float32)
             for z in range(1, nclass):
@@ -201,11 +206,16 @@ class BaseModel(object):
         t1ce = sitk.GetArrayFromImage(sitk.ReadImage(glob.glob(os.path.join(path, '*_t1ce_corrected.nii.gz'))[0]))
         t2 = sitk.GetArrayFromImage(sitk.ReadImage(glob.glob(os.path.join(path, '*_t2.nii.gz'))[0]))
         flair = sitk.GetArrayFromImage(sitk.ReadImage(glob.glob(os.path.join(path, '*_flair.nii.gz'))[0]))
-        # scale to 0 to 1
-        t1 = (t1 - np.amin(t1)) / (np.amax(t1) - np.amin(t1))
-        t1ce = (t1ce - np.amin(t1ce)) / (np.amax(t1ce) - np.amin(t1ce))
-        t2 = (t2 - np.amin(t2)) / (np.amax(t2) - np.amin(t2))
-        flair = (flair - np.amin(flair)) / (np.amax(flair) - np.amin(flair))
+        ## scale to 0 to 1
+        #t1 = (t1 - np.amin(t1)) / (np.amax(t1) - np.amin(t1))
+        #t1ce = (t1ce - np.amin(t1ce)) / (np.amax(t1ce) - np.amin(t1ce))
+        #t2 = (t2 - np.amin(t2)) / (np.amax(t2) - np.amin(t2))
+        #flair = (flair - np.amin(flair)) / (np.amax(flair) - np.amin(flair))
+        # scale to 0 mean, 1 std
+        t1 = (t1 - np.mean(t1)) / np.std(t1)
+        t1ce = (t1ce - np.mean(t1ce)) / np.std(t1ce)
+        t2 = (t2 - np.mean(t2)) / np.std(t2)
+        flair = (flair - np.mean(flai)) / np.std(flair)
         images = np.stack((t1, t1ce, t2, flair), axis=-1).astype(np.float32)
         return images
     
@@ -354,9 +364,9 @@ class BaseModel(object):
                     model = (output_label == roi + 1).astype(np.float32)
                     dice = self.get_dice(gt, model)
                     mean_dice[roi] = mean_dice[roi] + dice
-                mean_dice.append(self.get_dice(gt_wt, model_wt))
+                mean_dice[-1] = mean_dice[-1] + self.get_dice(gt_wt, model_wt)
                 
         if test_with_gt:
-            for roi in range(self.nclass - 1):
-                mean_dice[roi] = mean_dice[roi] / len(self.testing_subjects)
+            for p in range(len(mean_dice)):
+                mean_dice[p] = mean_dice[p] / len(self.testing_subjects)
             print(mean_dice)
