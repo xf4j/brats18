@@ -3,6 +3,7 @@ import os, sys, glob
 import numpy as np
 import nibabel as nib
 from nipype.interfaces.ants.segmentation import N4BiasFieldCorrection
+from nipype.interfaces.ants import DenoiseImage
 from skimage.transform import resize
 from multiprocessing import Pool, cpu_count
 
@@ -15,6 +16,13 @@ def n4_correction(im_input):
     n4.inputs.n_iterations = [50, 50, 30, 20]
     n4.inputs.output_image = im_input.replace('.nii.gz', '_corrected.nii.gz')
     n4.run()
+    
+def denoise_image(im_input):
+    denoise = DenoiseImage()
+    denoise.inputs.dimension = 3
+    denoise.inputs.input_image = im_input
+    denoise.inputs.output_image = im_input.replace('.nii.gz', '_denoised.nii.gz')
+    denoise.run()
 
 def batch_works(k):
     if k == n_processes - 1:
@@ -24,7 +32,13 @@ def batch_works(k):
         
     for path in paths:
         n4_correction(glob.glob(os.path.join(path, '*_t1.nii.gz'))[0])
+        denoise_image(glob.glob(os.path.join(path, '*_t1_corrected.nii.gz'))[0])
         n4_correction(glob.glob(os.path.join(path, '*_t1ce.nii.gz'))[0])
+        denoise_image(glob.glob(os.path.join(path, '*_t1ce_corrected.nii.gz'))[0])
+        n4_correction(glob.glob(os.path.join(path, '*_t2.nii.gz'))[0])
+        denoise_image(glob.glob(os.path.join(path, '*_t2_corrected.nii.gz'))[0])
+        n4_correction(glob.glob(os.path.join(path, '*_flair.nii.gz'))[0])
+        denoise_image(glob.glob(os.path.join(path, '*_flair_corrected.nii.gz'))[0])
     
 if __name__ == '__main__':
     if len(sys.argv) < 2:

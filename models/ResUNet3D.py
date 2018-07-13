@@ -7,9 +7,9 @@ import h5py
 
 from base_model import BaseModel
 
-class UNet3D(BaseModel):
+class ResUNet3D(BaseModel):
     def __init__(self, sess, checkpoint_dir, log_dir, training_subjects, testing_subjects, testing_during_training, 
-                 model_config=None):
+                 model_config):
         
         self.sess = sess
         
@@ -51,7 +51,6 @@ class UNet3D(BaseModel):
         self.nclass = 4
         self.class_labels = [0, 1, 2, 4]
         
-        #self.class_weights = [1.0, 2.0, 2.0, 2.0]
         self.class_weights = None
         
         self.build_model()
@@ -179,31 +178,37 @@ class UNet3D(BaseModel):
         
     def conv3d(self, input_, output_dim, f_size, use_prelu, is_training, scope='conv3d'):
         with tf.variable_scope(scope):
-            # VGG network uses two 3*3 conv layers to effectively increase receptive field
-            w1 = tf.get_variable('w1', [f_size, f_size, f_size, input_.get_shape()[-1], output_dim],
-                                 initializer=tf.truncated_normal_initializer(stddev=0.1))
-            conv1 = tf.nn.conv3d(input_, w1, strides=[1, 1, 1, 1, 1], padding='SAME')
-            b1 = tf.get_variable('b1', [output_dim], initializer=tf.constant_initializer(0.0))
-            conv1 = tf.nn.bias_add(conv1, b1)
-            bn1 = tf.contrib.layers.batch_norm(conv1, is_training=is_training, scope='bn1',
+            # Identity mapping
+            # BN->relu->conv->BN->relu->conv + 1x1 conv
+            bn1 = tf.contrib.layers.batch_norm(input_, is_training=is_training, scope='bn1',
                                                variables_collections=['bn_collections'])
             if use_prelu:
                 r1 = self.prelu(bn1, 'r1')
             else:
                 r1 = tf.nn.relu(bn1)
-            
-            w2 = tf.get_variable('w2', [f_size, f_size, f_size, output_dim, output_dim],
+            w1 = tf.get_variable('w1', [f_size, f_size, f_size, input_.get_shape()[-1], output_dim],
                                  initializer=tf.truncated_normal_initializer(stddev=0.1))
-            conv2 = tf.nn.conv3d(r1, w2, strides=[1, 1, 1, 1, 1], padding='SAME')
-            b2 = tf.get_variable('b2', [output_dim], initializer=tf.constant_initializer(0.0))
-            conv2 = tf.nn.bias_add(conv2, b2)
-            bn2 = tf.contrib.layers.batch_norm(conv2, is_training=is_training, scope='bn2',
+            conv1 = tf.nn.conv3d(r1, w1, strides=[1, 1, 1, 1, 1], padding='SAME')
+            b1 = tf.get_variable('b1', [output_dim], initializer=tf.constant_initializer(0.0))
+            conv1 = tf.nn.bias_add(conv1, b1)
+            bn2 = tf.contrib.layers.batch_norm(conv1, is_training=is_training, scope='bn2',
                                                variables_collections=['bn_collections'])
             if use_prelu:
                 r2 = self.prelu(bn2, 'r2')
             else:
                 r2 = tf.nn.relu(bn2)
-            return r2
+            w2 = tf.get_variable('w2', [f_size, f_size, f_size, output_dim, output_dim],
+                                 initializer=tf.truncated_normal_initializer(stddev=0.1))
+            conv2 = tf.nn.conv3d(r2, w2, strides=[1, 1, 1, 1, 1], padding='SAME')
+            b2 = tf.get_variable('b2', [output_dim], initializer=tf.constant_initializer(0.0))
+            conv2 = tf.nn.bias_add(conv2, b2)
+            
+            w0 = tf.get_variable('w0', [1, 1, 1, input_.get_shape()[-1], output_dim],
+                                 initializer=tf.truncated_normal_initializer(stddev=0.1))
+            conv0 = tf.nn.conv3d(input_, w0, strides=[1, 1, 1, 1, 1], padding='SAME')
+            b0 = tf.get_variable('b0', [output_dim], initializer=tf.constant_initializer(0.0))
+            conv0 = tf.nn.bias_add(conv0, b0)
+            return conv2 + conv0
     
     def strided_conv(self, input_, output_dim, f_size, stride, use_prelu, is_training, scope='strided_conv'):
         with tf.variable_scope(scope):
@@ -253,9 +258,9 @@ class UNet3D(BaseModel):
     @property
     def model_dir(self):
         if self.testing_during_training == True:
-            prefix = "unet3d"
+            prefix = "resunet3d"
         else:
-            prefix = "unet3d_final"
+            prefix = "resunet3d_final"
         if self.use_prelu:
             prefix += "_prelu"
         if self.use_conv_for_pooling:
@@ -264,7 +269,5 @@ class UNet3D(BaseModel):
             prefix += "_n4"
         if self.use_denoise:
             prefix += "_denoise"
-        if self.class_weights is not None:
-            prefix += "_weights"
         return "{}_features{}_im{}_layer{}_{}".format(prefix, self.features_root, self.im_size[0], self.layers, 
                                                       self.loss_type)

@@ -4,12 +4,13 @@ import tensorflow as tf
 import pickle, csv
 import configparser
 
-from utils import *
 from models.UNet3D import UNet3D
+from models.ResUNet3D import ResUNet3D
 
 flags = tf.app.flags
 flags.DEFINE_integer("phase", 0, "0 - train cv, 1 - test cv, 2 - train validation, 3 - test validation, 4 - test final")
 flags.DEFINE_string("model", "UNet3D", "Model name [UNet3D]")
+flags.DEFINE_boolean("with_finetune", False, "With fine tune [False]")
 flags.DEFINE_string("config", "models/UNet3D.ini", "Model config file [models/UNet3D.ini]")
 flags.DEFINE_string("train_dir", "../TrainingData", "Training dir")
 flags.DEFINE_string("validation_dir", "../ValidationData", "Validation dir")
@@ -26,12 +27,13 @@ def get_subjects(root_dir):
 def main(_):
     phase = FLAGS.phase
     model_name = FLAGS.model
+    with_finetune = FLAGS.with_finetune
     config_file = FLAGS.config
     train_dir = FLAGS.train_dir
     validation_dir = FLAGS.validation_dir
     test_dir = FLAGS.test_dir
     
-    if model_name != 'UNet3D':
+    if model_name != 'UNet3D' and model_name != 'ResUNet3D':
         raise Exception("Unsupported model")
     
     config = configparser.ConfigParser()
@@ -82,16 +84,20 @@ def main(_):
         # The multi-label dice loss is unstable
         if model_name == 'UNet3D':
             Model = UNet3D
+        elif model_name == 'ResUNet3D':
+            Model = ResUNet3D
             
         model = Model(sess, checkpoint_dir=checkpoint_dir, log_dir=log_dir, training_subjects=training_subjects, 
-                      testing_subjects=testing_subjects, testing_during_training=testing_during_training, 
+                      testing_subjects=testing_subjects, testing_during_training=testing_during_training,
                       model_config=config['Model'])
         
         if is_train:
-            model.train()
+            #model.train()
+            if with_finetune:
+                model.finetune(load_from_ckpt=True)
         else:
             if phase == 1:
-                output_dir = './output/cv'
+                output_dir = None
                 test_with_gt = True
             elif phase == 3:
                 output_dir = './output/validation'
@@ -99,10 +105,8 @@ def main(_):
             elif phase == 4:
                 output_dir = './output/test'
                 test_with_gt = False
-            if not os.path.exists(output_dir):
-                os.makedirs(output_dir)
                     
-            model.test(output_dir, test_with_gt)
+            model.test(output_dir, test_with_gt, with_finetune)
 
     tf.reset_default_graph()
     
